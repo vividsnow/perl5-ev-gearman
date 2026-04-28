@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# A short job-handle prefix is required because gearmand pads its handles
+# to 64 bytes; CI runner hostnames blow that limit.
+env:
+  GEARMAND_FLAGS: "--port=14730 --listen=127.0.0.1 -t 1 --job-handle-prefix=H:gm --pid-file=/tmp/gm.pid --log-file=/tmp/gm.log --daemon"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        perl: ['5.40', '5.38', '5.36', '5.34', '5.32', '5.28', '5.24', '5.20']
+    name: Linux / Perl ${{ matrix.perl }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl }}
+      - name: Install gearmand
+        run: sudo apt-get update && sudo apt-get install -y gearman-job-server
+      - name: Start gearmand
+        run: |
+          gearmand $GEARMAND_FLAGS
+          for i in $(seq 1 20); do
+            (echo > /dev/tcp/127.0.0.1/14730) 2>/dev/null && break
+            sleep 0.2
+          done
+      - name: Install deps
+        run: cpanm -n EV
+      - name: Build
+        run: perl Makefile.PL && make
+      - name: Test
+        run: TEST_GEARMAN_HOST=127.0.0.1 TEST_GEARMAN_PORT=14730 make test
+      - name: Show gearmand log on failure
+        if: failure()
+        run: tail -200 /tmp/gm.log || true
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        perl: ['5.40', '5.36']
+    name: macOS / Perl ${{ matrix.perl }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl }}
+      - name: Install gearmand
+        run: brew install gearman
+      - name: Start gearmand
+        run: |
+          gearmand $GEARMAND_FLAGS
+          for i in $(seq 1 20); do
+            nc -z 127.0.0.1 14730 && break
+            sleep 0.2
+          done
+      - name: Install deps
+        run: cpanm -n EV
+      - name: Build
+        run: perl Makefile.PL && make
+      - name: Test
+        run: TEST_GEARMAN_HOST=127.0.0.1 TEST_GEARMAN_PORT=14730 make test
+      - name: Show gearmand log on failure
+        if: failure()
+        run: tail -200 /tmp/gm.log || true
+
+  valgrind:
+    runs-on: ubuntu-latest
+    name: Linux / valgrind
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.40'
+      - name: Install gearmand and valgrind
+        run: sudo apt-get update && sudo apt-get install -y gearman-job-server valgrind
+      - name: Start gearmand
+        run: |
+          gearmand $GEARMAND_FLAGS
+          for i in $(seq 1 20); do
+            (echo > /dev/tcp/127.0.0.1/14730) 2>/dev/null && break
+            sleep 0.2
+          done
+      - name: Install deps
+        run: cpanm -n EV
+      - name: Build
+        run: perl Makefile.PL && make
+      - name: Run leak suite under valgrind
+        env:
+          TEST_GEARMAN_HOST: 127.0.0.1
+          TEST_GEARMAN_PORT: '14730'
+          EV_GEARMAN_VALGRIND: '1'
+        run: prove -bv xt/90_valgrind.t
+
+  asan:
+    runs-on: ubuntu-latest
+    name: Linux / ASAN+UBSAN
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.40'
+      - name: Install gearmand
+        run: sudo apt-get update && sudo apt-get install -y gearman-job-server
+      - name: Start gearmand
+        run: |
+          gearmand $GEARMAND_FLAGS
+          for i in $(seq 1 20); do
+            (echo > /dev/tcp/127.0.0.1/14730) 2>/dev/null && break
+            sleep 0.2
+          done
+      - name: Install deps
+        run: cpanm -n EV
+      - name: Build with sanitizers
+        run: |
+          perl Makefile.PL \
+            CCFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g" \
+            OPTIMIZE="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g" \
+            LDDLFLAGS="-shared -fsanitize=address,undefined"
+          make
+      - name: Test under sanitizers
+        # LD_PRELOAD libasan into perl directly (via prove) instead of make,
+        # because Ubuntu's GNU make has its own pre-existing strndup overflow
+        # in read_all_makefiles that aborts the whole run otherwise.
+        env:
+          TEST_GEARMAN_HOST: 127.0.0.1
+          TEST_GEARMAN_PORT: '14730'
+          ASAN_OPTIONS: 'abort_on_error=1:detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1'
+          UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
+        run: |
+          LIBASAN=$(cc -print-file-name=libasan.so)
+          LD_PRELOAD=$LIBASAN prove -b t/

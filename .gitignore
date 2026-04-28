@@ -1,0 +1,14 @@
+/blib/
+/Makefile
+/Makefile.old
+/MANIFEST.bak
+/MYMETA.*
+/Gearman.bs
+/Gearman.c
+/Gearman.o
+/Gearman.so
+/Gearman.xs
+/pm_to_blib
+*.tar.gz
+/_Inline/
+/src/ppport.h
