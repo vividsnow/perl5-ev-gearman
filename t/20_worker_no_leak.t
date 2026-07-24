@@ -59,11 +59,24 @@ EV::run;
 
 is $done, $N, "all $N jobs processed in one EV::run";
 
-my $delta  = $rss_b - $rss_a;
-my $budget = 0.25 * $N * $pay_kb;        # payload x jobs = 51200 KiB
-diag sprintf 'RSS delta job10->job%d: %.0f KiB (budget %.0f KiB)',
-    $N, $delta, $budget;
-cmp_ok $delta, '<', $budget,
-    'worker retains only a small fraction of payload x jobs';
+SKIP: {
+    # The RSS-delta heuristic is meaningless under an instrumented
+    # allocator: ASan redzones and quarantine (freed blocks are held,
+    # not returned — and CI runs detect_leaks=0) inflate RSS far past
+    # the real retained set, by an environment-dependent amount that
+    # sits right around this budget. Real leaks under the sanitizer
+    # build are caught by ASan itself and by xt/91_asan.t; the heuristic
+    # is validated on the normal-build CI jobs.
+    skip 'RSS-delta leak heuristic invalid under a sanitizer build', 1
+        if $ENV{ASAN_OPTIONS} || $ENV{UBSAN_OPTIONS}
+        || ($ENV{LD_PRELOAD} && $ENV{LD_PRELOAD} =~ /asan/i);
+
+    my $delta  = $rss_b - $rss_a;
+    my $budget = 0.25 * $N * $pay_kb;        # payload x jobs = 51200 KiB
+    diag sprintf 'RSS delta job10->job%d: %.0f KiB (budget %.0f KiB)',
+        $N, $delta, $budget;
+    cmp_ok $delta, '<', $budget,
+        'worker retains only a small fraction of payload x jobs';
+}
 
 done_testing;

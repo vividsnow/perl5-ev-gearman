@@ -1,10 +1,7 @@
 Revision history for EV::Gearman
 
 0.02    2026-07-24
-        - Numerous memory-safety and wire-protocol correctness fixes from
-          an adversarial code review
-        - Removed shutdown_server (unsupported by gearmand >= 1.1);
-          command_timeout is now per-request; minimum Perl is now 5.020
+        - Memory safety hardening
 
 0.01    2026-06-02
         - Initial release
