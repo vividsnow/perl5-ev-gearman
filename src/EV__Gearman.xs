@@ -2648,12 +2648,10 @@ CODE:
     }
     send_can_do(aTHX_ self, fname, flen, timeout);
 
-    /* If the work loop is idle (asleep after a NO_JOB), gearmand will NOT
-       wake us for jobs already queued for this newly-registered ability —
-       it only NOOPs sleeping workers on fresh submissions (confirmed
-       against gearmand 1.1.x). Cancel the sleep and poll once so that
-       backlog isn't stranded until the next submit or reconnect. A
-       spurious poll is harmless: NO_JOB just puts us back to sleep. */
+    /* If the worker is idle (asleep after NO_JOB), gearmand won't wake us
+       for jobs already queued under this new ability — it only NOOPs on
+       fresh submissions. Poll once so that backlog isn't stranded; a
+       spurious poll is harmless (NO_JOB just re-sleeps). */
     if (self->worker_active && self->worker_sleeping) {
         self->worker_sleeping = 0;
         worker_continue(aTHX_ self);
@@ -2718,12 +2716,7 @@ CODE:
 
     send_can_do(aTHX_ self, name, nlen, timeout);
 
-    /* If the work loop is idle (asleep after a NO_JOB), gearmand will NOT
-       wake us for jobs already queued for this newly-registered ability —
-       it only NOOPs sleeping workers on fresh submissions (confirmed
-       against gearmand 1.1.x). Cancel the sleep and poll once so that
-       backlog isn't stranded until the next submit or reconnect. A
-       spurious poll is harmless: NO_JOB just puts us back to sleep. */
+    /* Wake an idle worker to grab the new ability's backlog (see can_do). */
     if (self->worker_active && self->worker_sleeping) {
         self->worker_sleeping = 0;
         worker_continue(aTHX_ self);
@@ -2800,8 +2793,7 @@ CODE:
         cb = ST(items-1);
 
     /* Multi-line admin commands terminate with ".\n"; single-line ones
-       don't. Verified empirically against gearmand 1.1.21 (raw socket,
-       each command sent and its reply observed):
+       don't (gearmand 1.1.21):
          multi-line: status, workers, prioritystatus — arguments are
                      ignored by the server and the reply stays
                      multi-line, so these match on the leading word;
